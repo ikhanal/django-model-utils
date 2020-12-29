@@ -56,7 +56,7 @@ class TimeStampedModelWithCreator(TimeStampedModel):
         abstract = True
 
     created_by = models.ForeignKey(
-        settings.get_auth,
+        settings.AUTH_USER_MODEL,
         verbose_name=_("Created By"),
         editable=False,
         blank=True,
