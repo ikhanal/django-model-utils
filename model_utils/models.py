@@ -1,9 +1,10 @@
+from model_utils.middlewares import get_current_user
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models, router, transaction
 from django.db.models.functions import Now
 from django.db.models.signals import post_save, pre_save
 from django.utils.translation import gettext_lazy as _
-
+from django.conf import settings
 from model_utils.fields import (
     AutoCreatedField,
     AutoLastModifiedField,
@@ -22,8 +23,9 @@ class TimeStampedModel(models.Model):
     ``created`` and ``modified`` fields.
 
     """
-    created = AutoCreatedField(_('created'))
-    modified = AutoLastModifiedField(_('modified'))
+
+    created = AutoCreatedField(_("created"))
+    modified = AutoLastModifiedField(_("modified"))
 
     def save(self, *args, **kwargs):
         """
@@ -31,14 +33,54 @@ class TimeStampedModel(models.Model):
         modified field is updated even if it is not given as
         a parameter to the update field argument.
         """
-        update_fields = kwargs.get('update_fields', None)
+        update_fields = kwargs.get("update_fields", None)
         if update_fields:
-            kwargs['update_fields'] = set(update_fields).union({'modified'})
+            kwargs["update_fields"] = set(update_fields).union({"modified"})
 
         super().save(*args, **kwargs)
 
     class Meta:
         abstract = True
+
+
+class TimeStampedModelWithCreator(TimeStampedModel):
+    class Meta:
+        abstract = True
+
+    """
+    Abstract base class with a creation
+    and modification date and time
+    """
+
+    class Meta:
+        abstract = True
+
+    created_by = models.ForeignKey(
+        settings.get_auth,
+        verbose_name=_("Created By"),
+        editable=False,
+        blank=True,
+        null=True,
+        related_name="created_%(class)ss",
+        on_delete=models.SET_NULL,
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("Updated By"),
+        editable=True,
+        blank=True,
+        null=True,
+        related_name="updated_%(class)ss",
+        on_delete=models.SET_NULL,
+    )
+
+    def save(self, *args, **kwargs):
+        if not self.created_by:
+            self.created_by = get_current_user()
+        self.updated_by = get_current_user()
+        super(TimeStampedModelWithCreator, self).save(*args, **kwargs)
+
+    save.alters_data = True
 
 
 class TimeFramedModel(models.Model):
@@ -47,8 +89,9 @@ class TimeFramedModel(models.Model):
     and ``end`` fields to record a timeframe.
 
     """
-    start = models.DateTimeField(_('start'), null=True, blank=True)
-    end = models.DateTimeField(_('end'), null=True, blank=True)
+
+    start = models.DateTimeField(_("start"), null=True, blank=True)
+    end = models.DateTimeField(_("end"), null=True, blank=True)
 
     class Meta:
         abstract = True
@@ -63,8 +106,9 @@ class StatusModel(models.Model):
     status that returns objects with that status only.
 
     """
-    status = StatusField(_('status'))
-    status_changed = MonitorField(_('status changed'), monitor='status')
+
+    status = StatusField(_("status"))
+    status_changed = MonitorField(_("status changed"), monitor="status")
 
     def save(self, *args, **kwargs):
         """
@@ -72,9 +116,9 @@ class StatusModel(models.Model):
         status_changed field is updated even if it is not given as
         a parameter to the update field argument.
         """
-        update_fields = kwargs.get('update_fields', None)
-        if update_fields and 'status' in update_fields:
-            kwargs['update_fields'] = set(update_fields).union({'status_changed'})
+        update_fields = kwargs.get("update_fields", None)
+        if update_fields and "status" in update_fields:
+            kwargs["update_fields"] = set(update_fields).union({"status_changed"})
 
         super().save(*args, **kwargs)
 
@@ -92,12 +136,11 @@ def add_status_query_managers(sender, **kwargs):
 
     default_manager = sender._meta.default_manager
 
-    for value, display in getattr(sender, 'STATUS', ()):
+    for value, display in getattr(sender, "STATUS", ()):
         if _field_exists(sender, value):
             raise ImproperlyConfigured(
                 "StatusModel: Model '%s' has a field named '%s' which "
-                "conflicts with a status of the same name."
-                % (sender.__name__, value)
+                "conflicts with a status of the same name." % (sender.__name__, value)
             )
         sender.add_to_class(value, QueryManager(status=value))
 
@@ -111,16 +154,18 @@ def add_timeframed_query_manager(sender, **kwargs):
     """
     if not issubclass(sender, TimeFramedModel):
         return
-    if _field_exists(sender, 'timeframed'):
+    if _field_exists(sender, "timeframed"):
         raise ImproperlyConfigured(
             "Model '%s' has a field named 'timeframed' "
-            "which conflicts with the TimeFramedModel manager."
-            % sender.__name__
+            "which conflicts with the TimeFramedModel manager." % sender.__name__
         )
-    sender.add_to_class('timeframed', QueryManager(
-        (models.Q(start__lte=now) | models.Q(start__isnull=True))
-        & (models.Q(end__gte=now) | models.Q(end__isnull=True))
-    ))
+    sender.add_to_class(
+        "timeframed",
+        QueryManager(
+            (models.Q(start__lte=now) | models.Q(start__isnull=True))
+            & (models.Q(end__gte=now) | models.Q(end__isnull=True))
+        ),
+    )
 
 
 models.signals.class_prepared.connect(add_status_query_managers)
@@ -138,6 +183,7 @@ class SoftDeletableModel(models.Model):
     kept in db for any reason.
     Default manager returns only not-removed entries.
     """
+
     is_removed = models.BooleanField(default=False)
 
     class Meta:
@@ -164,6 +210,7 @@ class UUIDModel(models.Model):
     This abstract base class provides id field on any model that inherits from it
     which will be the primary key.
     """
+
     id = UUIDField(
         primary_key=True,
         version=4,
@@ -179,6 +226,7 @@ class SaveSignalHandlingModel(models.Model):
     An abstract base class model to pass a parameter ``signals_to_disable``
     to ``save`` method in order to disable signals
     """
+
     class Meta:
         abstract = True
 
@@ -192,8 +240,14 @@ class SaveSignalHandlingModel(models.Model):
 
         super().save(*args, **kwargs)
 
-    def save_base(self, raw=False, force_insert=False,
-                  force_update=False, using=None, update_fields=None):
+    def save_base(
+        self,
+        raw=False,
+        force_insert=False,
+        force_update=False,
+        using=None,
+        update_fields=None,
+    ):
         """
         Copied from base class for a minor change.
         This is an ugly overwriting but since Django's ``save_base`` method
@@ -208,23 +262,32 @@ class SaveSignalHandlingModel(models.Model):
         if cls._meta.proxy:
             cls = cls._meta.concrete_model
         meta = cls._meta
-        if not meta.auto_created and 'pre_save' not in self.signals_to_disable:
+        if not meta.auto_created and "pre_save" not in self.signals_to_disable:
             pre_save.send(
-                sender=origin, instance=self, raw=raw, using=using,
+                sender=origin,
+                instance=self,
+                raw=raw,
+                using=using,
                 update_fields=update_fields,
             )
         with transaction.atomic(using=using, savepoint=False):
             if not raw:
                 self._save_parents(cls, using, update_fields)
-            updated = self._save_table(raw, cls, force_insert, force_update, using, update_fields)
+            updated = self._save_table(
+                raw, cls, force_insert, force_update, using, update_fields
+            )
 
         self._state.db = using
         self._state.adding = False
 
-        if not meta.auto_created and 'post_save' not in self.signals_to_disable:
+        if not meta.auto_created and "post_save" not in self.signals_to_disable:
             post_save.send(
-                sender=origin, instance=self, created=(not updated),
-                update_fields=update_fields, raw=raw, using=using,
+                sender=origin,
+                instance=self,
+                created=(not updated),
+                update_fields=update_fields,
+                raw=raw,
+                using=using,
             )
 
         # Empty the signals in case it might be used somewhere else in future
